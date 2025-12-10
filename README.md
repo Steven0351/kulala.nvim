@@ -1,3 +1,5 @@
+This is a fork of [mistweaverco/kulala.nvim](https://github.com/mistweaverco/kulala.nvim) that plays a little nicer with nix. It also fixes some graphql issues that I have encountered. This branch will very likely be rebased to pull in changes and keep open the possibility to make contributions upstream.
+
 <div align="center">
 
 ![Kulala Logo](logo.svg)
