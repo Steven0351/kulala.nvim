@@ -72,7 +72,7 @@ local function setup_treesitter_main()
     return vim.treesitter.language.register("kulala_http", { "http", "rest" })
   end
 
-  require("nvim-treesitter").install({ "kulala_http" }):wait(10000)
+  -- require("nvim-treesitter").install({ "kulala_http" }):wait(10000)
 
   if vim.tbl_contains(ts_config.get_installed("parsers"), "kulala_http") then
     Db.settings:write { parser_ver = get_parser_ver(parser_path) }
@@ -123,9 +123,9 @@ local function set_kulala_parser()
   end
 
   if parsers.get_parser_configs then
-    setup_treesitter_master()
+    -- setup_treesitter_master()
   else
-    setup_treesitter_main()
+    -- setup_treesitter_main()
   end
 end
 

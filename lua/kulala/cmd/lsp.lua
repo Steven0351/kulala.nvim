@@ -231,25 +231,29 @@ local function find_upwards(cur_line, pattern)
   end
 end
 
-local function get_graphql_type(req_name, field_name, type)
+local function get_graphql_type(req_name, parent_type_name, field_name, type)
   local description = "`kind:` [" .. type.kind .. "]"
 
   description = type.name and (description .. ", `name:` [" .. type.name .. "]") or description
-  description = type.ofType and (description .. " (" .. get_graphql_type(req_name, field_name, type.ofType) .. ")")
+  description = type.ofType
+      and (description .. " (" .. get_graphql_type(req_name, parent_type_name, field_name, type.ofType) .. ")")
     or description
 
-  if type.kind == "OBJECT" then cache.graphql[req_name].field_types[field_name] = type.name end
+  if type.kind == "OBJECT" then
+    cache.graphql[req_name].field_types[parent_type_name] = cache.graphql[req_name].field_types[parent_type_name] or {}
+    cache.graphql[req_name].field_types[parent_type_name][field_name] = type.name
+  end
 
   return description
 end
 
-local function get_graphql_args(req_name, field_name, args)
+local function get_graphql_args(req_name, parent_type_name, field_name, args)
   local kind = lsp_kind.Variable
 
   return vim
     .iter(args or {})
     :map(function(arg)
-      local type = get_graphql_type(req_name, field_name, arg.type)
+      local type = get_graphql_type(req_name, parent_type_name, field_name, arg.type)
       local details = "`name`: [" .. arg.name .. "]\n" .. "`type`: " .. type .. "\n"
 
       details = arg.defaultValue and (details .. "`defaultValue`: " .. arg.defaultValue .. "\n") or details
@@ -259,14 +263,14 @@ local function get_graphql_args(req_name, field_name, args)
     :totable()
 end
 
-local function get_graphql_fields(req_name, fields)
+local function get_graphql_fields(req_name, parent_type_name, fields)
   local kind = lsp_kind.Variable
 
   return vim
     .iter(fields or {})
     :map(function(field)
-      local details = { "`type`: " .. get_graphql_type(req_name, field.name, field.type) }
-      local args = get_graphql_args(req_name, field.name, field.args)
+      local details = { "`type`: " .. get_graphql_type(req_name, parent_type_name, field.name, field.type) }
+      local args = get_graphql_args(req_name, parent_type_name, field.name, field.args)
 
       _ = #args > 0
         and table.insert(details, "\n**args**:\n" .. vim
@@ -290,7 +294,7 @@ local function get_graphql_types(req_name, types)
   return vim
     .iter(types)
     :map(function(type)
-      local fields = get_graphql_fields(req_name, type.fields)
+      local fields = get_graphql_fields(req_name, type.name, type.fields)
       local details = {}
 
       table.insert(details, "**kind**: " .. type.kind)
@@ -307,6 +311,52 @@ local function get_graphql_types(req_name, types)
       return item
     end)
     :totable()
+end
+
+local function find_field_return_type(field_types, field_name)
+  for parent_type, fields in pairs(field_types) do
+    if fields[field_name] then return fields[field_name] end
+  end
+  return nil
+end
+
+-- Recursively resolve the type at a given line by walking up the query
+local function resolve_type_at_line(lnum, schema_cache, queryType, mutationType)
+  local parent_field = find_upwards(lnum, "%s*([^%s%(]+).*{")
+
+  if not parent_field then return nil end
+
+  -- Check if this is the root query/mutation
+  if parent_field == "query" then
+    return queryType
+  elseif parent_field == "mutation" then
+    return mutationType
+  end
+
+  -- Find where this parent field is defined (walk up further)
+  local parent_line = lnum - 1
+  while parent_line >= 0 do
+    local line = vim.api.nvim_buf_get_lines(state.current_buffer, parent_line, parent_line + 1, false)[1] or ""
+    if line:match("%s*" .. vim.pesc(parent_field) .. "%s*.*{") then
+      -- Found the line where parent_field is defined
+      -- Now we need to know what type contains this field
+      local grandparent_type = resolve_type_at_line(parent_line, schema_cache, queryType, mutationType)
+
+      if grandparent_type then
+        -- Look up parent_field in grandparent_type's fields
+        local field_types_for_grandparent = schema_cache.field_types[grandparent_type]
+        if field_types_for_grandparent and field_types_for_grandparent[parent_field] then
+          return field_types_for_grandparent[parent_field]
+        end
+      end
+      break
+    end
+    if line:match("###") then break end
+    parent_line = parent_line - 1
+  end
+
+  -- Fallback to old behavior if we can't resolve via context
+  return find_field_return_type(schema_cache.field_types, parent_field)
 end
 
 local function graphql()
@@ -343,17 +393,26 @@ local function graphql()
       return {}
     end
 
-    cache.graphql[schema_name] = { queryType = schema.data.__schema.queryType.name, types = {}, field_types = {} }
+    cache.graphql[schema_name] = {
+      queryType = schema.data.__schema.queryType.name,
+      mutationType = schema.data.__schema.mutationType.name,
+      types = {},
+      field_types = {},
+    }
+
     cache.graphql[schema_name].types = get_graphql_types(schema_name, schema.data.__schema.types)
   end
 
   local lnum, cnum = state.current_line - 1, vim.fn.col(".") - 1
   local is_args = vim.api.nvim_buf_get_text(state.current_buffer, lnum, 0, lnum, cnum, {})[1]:match("%s*(.+)%s*%(")
 
-  local parent = find_upwards(lnum, "%s*([^%s%(]+).*{")
-  parent = parent == "query" and cache.graphql[schema_name].queryType
-    or cache.graphql[schema_name].field_types[parent]
-    or parent
+  -- Use context-aware resolution to find the parent type
+  local parent = resolve_type_at_line(
+    lnum,
+    cache.graphql[schema_name],
+    cache.graphql[schema_name].queryType,
+    cache.graphql[schema_name].mutationType
+  )
 
   local parent_type = vim.iter(cache.graphql[schema_name].types):find(function(item)
     return item.label:lower() == parent:lower()
