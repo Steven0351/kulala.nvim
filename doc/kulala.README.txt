@@ -10,6 +10,12 @@ Table of Contents                            *kulala.README-table-of-contents*
   - Install                                     |kulala.README-••-install|
   - Honorable mentions               |kulala.README-••-honorable-mentions|
 4. Links                                                 |kulala.README-links|
+This is a fork of mistweaverco/kulala.nvim
+https://github.com/mistweaverco/kulala.nvim that plays a little nicer with nix.
+It also fixes some graphql issues that I have encountered. This branch will
+very likely be rebased to pull in changes and keep open the possibility to make
+contributions upstream.
+
 
 ==============================================================================
 1. kulala.nvim                                     *kulala.README-kulala.nvim*
